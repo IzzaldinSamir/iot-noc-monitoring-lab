@@ -3,12 +3,14 @@ global:
   evaluation_interval: 15s
 
 scrape_configs:
-  # Monitor the metrics database itself
   - job_name: 'prometheus'
     static_configs:
       - targets: ['localhost:9090']
 
-  # Monitor the IoT network broker
-  - job_name: 'iot_packet_core'
+  - job_name: 'iot_broker_metrics'
     static_configs:
-      - targets: ['mosquitto:1883']
+      - targets: ['mosquitto-exporter:9234']
+
+  - job_name: 'docker_container_metrics'
+    static_configs:
+      - targets: ['cadvisor:8080']
