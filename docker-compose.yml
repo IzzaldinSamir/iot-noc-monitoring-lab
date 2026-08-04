@@ -1,16 +1,39 @@
 version: '3.8'
 
 services:
-  # 1. IoT Message Broker (MQTT) - Handles all the fake device traffic
   mosquitto:
     image: eclipse-mosquitto:latest
     container_name: noc-iot-broker
     ports:
-      - "1883:1883" # Standard MQTT port
-      - "9001:9001" # WebSockets port
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf
     restart: unless-stopped
 
-  # 2. NOC Time-Series Database - Scrapes and stores the network metrics
+  mosquitto-exporter:
+    image: sapcc/mosquitto-exporter:latest
+    container_name: noc-mosquitto-exporter
+    ports:
+      - "9234:9234"
+    environment:
+      - MQTT_ENDPOINT=tcp://mosquitto:1883
+    depends_on:
+      - mosquitto
+    restart: unless-stopped
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    container_name: noc-cadvisor
+    ports:
+      - "8080:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    restart: unless-stopped
+
   prometheus:
     image: prom/prometheus:latest
     container_name: noc-prometheus
@@ -22,14 +45,13 @@ services:
       - '--config.file=/etc/prometheus/prometheus.yml'
     restart: unless-stopped
 
-  # 3. NOC Visual Dashboard - The front-end UI for the NOC team
   grafana:
     image: grafana/grafana:latest
     container_name: noc-grafana
     ports:
       - "3000:3000"
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD=secure_noc_admin # Default password
+      - GF_SECURITY_ADMIN_PASSWORD=secure_noc_admin
     depends_on:
       - prometheus
     restart: unless-stopped
