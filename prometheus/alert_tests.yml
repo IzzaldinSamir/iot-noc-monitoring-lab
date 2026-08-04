@@ -1,0 +1,55 @@
+rule_files:
+  - alert_rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  - name: Critical broker and monitoring outages fire
+    interval: 30s
+    input_series:
+      - series: 'up{job="cadvisor", instance="cadvisor:8080"}'
+        values: '0 0 0 0 0 0 0'
+      - series: 'mosquitto_up{broker="tcp://mosquitto:1883"}'
+        values: '0 0 0 0 0 0 0'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: MonitoringTargetDown
+        exp_alerts:
+          - exp_labels:
+              instance: cadvisor:8080
+              job: cadvisor
+              severity: critical
+              team: noc
+            exp_annotations:
+              summary: Prometheus target cadvisor is down
+              description: Prometheus cannot scrape cadvisor:8080 for more than one minute.
+              runbook_url: https://github.com/IzzaldinSamir/iot-noc-monitoring-lab/blob/main/RUNBOOK.md#monitoringtargetdown
+      - eval_time: 1m
+        alertname: MosquittoBrokerUnavailable
+        exp_alerts:
+          - exp_labels:
+              broker: tcp://mosquitto:1883
+              severity: critical
+              team: noc
+            exp_annotations:
+              summary: MQTT broker is unavailable
+              description: The Mosquitto exporter has been disconnected from tcp://mosquitto:1883 for 30 seconds.
+              runbook_url: https://github.com/IzzaldinSamir/iot-noc-monitoring-lab/blob/main/RUNBOOK.md#mosquittobrokerunavailable
+
+  - name: Silent telemetry fires without control-traffic false negatives
+    interval: 30s
+    input_series:
+      - series: 'mosquitto_publish_received_load1{broker="tcp://mosquitto:1883"}'
+        values: '0 0 0 0 0 0 0 0'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: TelemetryTrafficSilent
+        exp_alerts:
+          - exp_labels:
+              broker: tcp://mosquitto:1883
+              severity: warning
+              team: noc
+            exp_annotations:
+              summary: Inbound MQTT traffic is silent
+              description: The broker's one-minute inbound PUBLISH rate has remained below 0.05 messages per second.
+              runbook_url: https://github.com/IzzaldinSamir/iot-noc-monitoring-lab/blob/main/RUNBOOK.md#telemetrytrafficsilent

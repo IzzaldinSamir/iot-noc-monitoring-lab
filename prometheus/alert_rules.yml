@@ -1,0 +1,57 @@
+groups:
+  - name: noc-infrastructure
+    rules:
+      - alert: MonitoringTargetDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: noc
+        annotations:
+          summary: "Prometheus target {{ $labels.job }} is down"
+          description: "Prometheus cannot scrape {{ $labels.instance }} for more than one minute."
+          runbook_url: "https://github.com/IzzaldinSamir/iot-noc-monitoring-lab/blob/main/RUNBOOK.md#monitoringtargetdown"
+
+      - alert: MosquittoBrokerUnavailable
+        expr: mosquitto_up == 0
+        for: 30s
+        labels:
+          severity: critical
+          team: noc
+        annotations:
+          summary: "MQTT broker is unavailable"
+          description: "The Mosquitto exporter has been disconnected from {{ $labels.broker }} for 30 seconds."
+          runbook_url: "https://github.com/IzzaldinSamir/iot-noc-monitoring-lab/blob/main/RUNBOOK.md#mosquittobrokerunavailable"
+
+      - alert: TelemetryTrafficSilent
+        expr: mosquitto_publish_received_load1 < 0.05
+        for: 2m
+        labels:
+          severity: warning
+          team: noc
+        annotations:
+          summary: "Inbound MQTT traffic is silent"
+          description: "The broker's one-minute inbound PUBLISH rate has remained below 0.05 messages per second."
+          runbook_url: "https://github.com/IzzaldinSamir/iot-noc-monitoring-lab/blob/main/RUNBOOK.md#telemetrytrafficsilent"
+
+      - alert: MosquittoDroppedMessages
+        expr: mosquitto_publish_dropped_load1 > 0
+        for: 1m
+        labels:
+          severity: warning
+          team: noc
+        annotations:
+          summary: "Mosquitto is dropping publish messages"
+          description: "The one-minute dropped-message rate is {{ $value | humanize }} on {{ $labels.broker }}."
+          runbook_url: "https://github.com/IzzaldinSamir/iot-noc-monitoring-lab/blob/main/RUNBOOK.md#mosquittodroppedmessages"
+
+      - alert: PrometheusConfigReloadFailed
+        expr: prometheus_config_last_reload_successful == 0
+        for: 5m
+        labels:
+          severity: warning
+          team: noc
+        annotations:
+          summary: "Prometheus rejected its last configuration reload"
+          description: "Prometheus has reported an unsuccessful configuration reload for five minutes."
+          runbook_url: "https://github.com/IzzaldinSamir/iot-noc-monitoring-lab/blob/main/RUNBOOK.md#prometheusconfigreloadfailed"

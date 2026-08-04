@@ -1,0 +1,13 @@
+route:
+  receiver: noc-console
+  group_by:
+    - alertname
+    - job
+  group_wait: 10s
+  group_interval: 1m
+  repeat_interval: 4h
+
+# Alerts remain visible in the Alertmanager UI. Add email, Slack, or another
+# receiver here when connecting the lab to a real notification destination.
+receivers:
+  - name: noc-console
