@@ -1,57 +1,183 @@
-version: '3.8'
+name: iot-noc-lab
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
 
 services:
   mosquitto:
-    image: eclipse-mosquitto:latest
-    container_name: noc-iot-broker
+    image: eclipse-mosquitto:2.1.2-alpine
     ports:
-      - "1883:1883"
-      - "9001:9001"
+      - "${BIND_ADDRESS:-127.0.0.1}:1883:1883"
+      - "${BIND_ADDRESS:-127.0.0.1}:9001:9001"
     volumes:
-      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto-data:/mosquitto/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          mosquitto_sub -h 127.0.0.1 -p 1883
+          -t '$$SYS/broker/version' -C 1 -W 3 >/dev/null 2>&1
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - noc
+    logging: *default-logging
+
+  device-simulator:
+    image: eclipse-mosquitto:2.1.2-alpine
+    entrypoint: ["/bin/sh", "/opt/noc/publish-telemetry.sh"]
+    environment:
+      BROKER_HOST: mosquitto
+      BROKER_PORT: "1883"
+      DEVICE_COUNT: "${SIMULATED_DEVICE_COUNT:-8}"
+      PUBLISH_INTERVAL: "${TELEMETRY_INTERVAL_SECONDS:-5}"
+    volumes:
+      - ./scripts/publish-telemetry.sh:/opt/noc/publish-telemetry.sh:ro
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+    read_only: true
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - noc
+    logging: *default-logging
 
   mosquitto-exporter:
-    image: sapcc/mosquitto-exporter:latest
-    container_name: noc-mosquitto-exporter
+    image: ghcr.io/qaoru/mosquitto_exporter:v1.0.1
+    command:
+      - --mqtt.broker=tcp://mosquitto:1883
+      - --mqtt.client-id=noc-metrics-exporter
+      - --collector.clients
+      - --collector.messages
+      - --collector.load
     ports:
-      - "9234:9234"
-    environment:
-      - MQTT_ENDPOINT=tcp://mosquitto:1883
+      - "${BIND_ADDRESS:-127.0.0.1}:9344:9344"
     depends_on:
-      - mosquitto
+      mosquitto:
+        condition: service_healthy
+    read_only: true
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - noc
+    logging: *default-logging
 
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:latest
-    container_name: noc-cadvisor
+    image: ghcr.io/google/cadvisor:v0.60.5
+    command:
+      - --docker_only=true
+      - --housekeeping_interval=10s
+    privileged: true
     ports:
-      - "8080:8080"
+      - "${BIND_ADDRESS:-127.0.0.1}:8080:8080"
     volumes:
       - /:/rootfs:ro
       - /var/run:/var/run:ro
       - /sys:/sys:ro
-      - /var/lib/docker/:/var/lib/docker:ro
+      - /var/lib/docker:/var/lib/docker:ro
     restart: unless-stopped
+    networks:
+      - noc
+    logging: *default-logging
+
+  alertmanager:
+    image: prom/alertmanager:v0.33.1
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:9093:9093"
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - noc
+    logging: *default-logging
 
   prometheus:
-    image: prom/prometheus:latest
-    container_name: noc-prometheus
-    ports:
-      - "9090:9090"
-    volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    image: prom/prometheus:v3.13.2
     command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+      - --web.console.libraries=/usr/share/prometheus/console_libraries
+      - --web.console.templates=/usr/share/prometheus/consoles
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
+      - prometheus-data:/prometheus
+    depends_on:
+      - alertmanager
+      - cadvisor
+      - mosquitto-exporter
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "--quiet", "http://127.0.0.1:9090/-/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - noc
+    logging: *default-logging
 
   grafana:
-    image: grafana/grafana:latest
-    container_name: noc-grafana
-    ports:
-      - "3000:3000"
+    image: grafana/grafana:13.1.2
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD=secure_noc_admin
+      GF_SECURITY_ADMIN_USER: "${GRAFANA_ADMIN_USER:-admin}"
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:-noc-lab-local-only}"
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_USERS_DEFAULT_THEME: dark
+      GF_SECURITY_DISABLE_GRAVATAR: "true"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/dashboards/iot-noc-overview.json
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:3000:3000"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
     depends_on:
-      - prometheus
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:3000/api/health >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - noc
+    logging: *default-logging
+
+networks:
+  noc:
+    name: iot-noc-lab
+
+volumes:
+  alertmanager-data:
+  grafana-data:
+  mosquitto-data:
+  prometheus-data:
