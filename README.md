@@ -165,4 +165,6 @@ This is an isolated local lab, not a production Mosquitto deployment. MQTT anony
 | `make smoke` | Run the live integration test |
 | `make validate` | Run all static configuration checks |
 
-Built by [Izz al-Din Samir](https://github.com/IzzaldinSamir).
+## License
+
+Licensed under the [MIT License](LICENSE).
